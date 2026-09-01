@@ -1,0 +1,29 @@
+1. Build the instance using the backlog .json file and the "build_model" function.
+
+2. Identify the full time horizon using the "get_periods" funtion. Using the "num_blocks" function,
+determine how many consecutive, non-overlapping blocks of 5 periods are needed to cover the full horizon.
+If the total number of periods isn't a multiple of 5, the last block will contain fewer than 5 periods.
+
+3. Using the "variables_by_period" function, retreive the binary variables (y) of the model grouped by period
+
+4. Set the first block as the current block. Initialize "fixed_vars" as empty.
+
+5. Using the "get_block_periods" function, obtain the periods belonging to the current block and the periods belonging to all not-yet-elaborated (i.e. future) blocks.
+
+6. Using the "partition_by_block" function, obtain:
+   - core_vars: the binary variables belonging to the current block
+   - relaxed_vars: the binary variables belonging to all not-yet-elaborated 
+     (future) blocks
+Mind: fixed_vars carries over unchanged from the previous iteration (i.e. it's empty on the first iteration).
+
+7. Solve the current subproblem using the "solve_subproblem" function. The parameters sub_time_limit, sub_mip_gap, and sub_work_limit are keyword arguments: they must be passed by name (e.g. solve_subproblem(model, fixed_vars, core_vars, relaxed_vars; sub_time_limit=..., sub_mip_gap=..., sub_work_limit=...)), never positionally.
+
+8. Check whther the subproblem produced a usable solution through the "subproblem_succeeded" function. There are two possible outcomes:
+   - If no usable solution has been achieved, halt the procedure and report the decisions of the previous blocks made this subproblem infesible
+   - If a usable solution has been found, fix the binary variables of the current block to the values found in the solution, using the "apply_fixing_policy" function
+
+9. Shift to the following block, which becomes the new current block.
+
+10. Repeat steps 4 to 9 until all blocks have been elaborated and a complete solution has been obtained.
+
+11. Upon completion, write the result to file using the "write_solution" function, passing fixed_vars, the continuous variable values from the last subproblem's solution, and the desired output path.

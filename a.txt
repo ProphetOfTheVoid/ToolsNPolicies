@@ -1,0 +1,288 @@
+[SYSTEM / CONTEXT]
+You are an expert Julia programmer, and an expert in Operations Research 
+and Mixed Integer Programming (MIP). You are given a policy and a set of 
+tools for a specific instance of a multi-index time-dependent MIP problem 
+(a Lot Sizing Problem with backlog). Your task is to produce a standalone, 
+instance-independent block of Julia code that, when executed, solves the 
+instance by following the policy and using the tools provided below.
+
+Before finalizing your answer, mentally check every function call for 
+correct Julia syntax: keyword arguments must match the exact parameter 
+names from the function signatures provided, and must use `name=value` 
+syntax only for parameters explicitly declared as keyword-only (after `;` 
+in the signature) — never invent keyword names, and never use positional 
+syntax for keyword-only parameters. Never use dot-syntax method calls 
+(e.g. `obj.method(...)`), which Julia does not support; use the plain 
+function call syntax instead (e.g. `union!(obj, ...)`). Only use operators 
+and function names that are standard, well-known Julia/JuMP identifiers — 
+never invent or guess a name, symbol, or operator that does not appear in 
+the tools provided or in core Julia/JuMP.
+
+The generated code must not print progress messages, logging, or status 
+updates to standard output during normal execution. The only required 
+output is the final result file produced by "write_solution". The one 
+exception is reporting failure: if the procedure halts due to subproblem 
+infeasibility, print a single explanatory message as described in step 7.
+
+[POLICY]
+1. Build the instance using the backlog .json file and the "build_model" function.
+
+2. Identify the full time horizon using the "get_periods" function. Using the "num_blocks" function with a step_size of 3, determine how many windows are needed to cover the full horizon.
+
+3. Using the "variables_by_period" function, retrieve the binary variables (y) of the model grouped by period.
+
+4. Set the first window as the current window (block_index = 1). Initialize "fixed_vars" as empty.
+
+5. Using the "get_block_periods" function, with a block_size of 5 and a step_size of 3, obtain the periods belonging to the current window and the periods belonging to all not-yet-reached (future) periods.
+
+6. Using the "partition_by_block" function, obtain:
+    - core_vars: the binary variables belonging to the current window's periods (this includes both new periods entering the window for the first time, and any overlapping periods already solved in a previous window but not yet permanently fixed)
+    - relaxed_vars: the binary variables belonging to all future periods
+Mind: fixed_vars carries over unchanged from the previous iteration (i.e. it's empty on the first iteration). Continuous variables are never included in core_vars or relaxed_vars: they remain free throughout the entire procedure.
+
+7. Solve the current subproblem using the "solve_subproblem" function. The parameters sub_time_limit, sub_mip_gap, and sub_work_limit are keyword arguments: they must be passed by name (e.g. solve_subproblem(model, fixed_vars, core_vars, relaxed_vars; sub_time_limit=..., sub_mip_gap=..., sub_work_limit=...)), never positionally.
+
+8. Check whether the subproblem produced a usable solution through the "subproblem_succeeded" function. There are two possible outcomes:
+    - If no usable solution has been achieved, halt the procedure and report that the fixings decided in previous windows likely made this portion of the problem infeasible — this does not necessarily mean the original instance itself is infeasible.
+    - If a usable solution has been found, permanently fix the binary variables belonging to the first 3 periods of the current window (or all periods of the current window, if it contains fewer than 3) to the values found in the solution, using the "apply_fixing_policy!" function.
+
+9. Shift to the following window, which becomes the new current window (increment block_index by 1).
+
+10. Repeat steps 5 to 9 until all windows have been elaborated and a complete solution has been obtained.
+
+11. Upon completion, write the result to file using the "write_solution" function, passing fixed_vars, the continuous variable values from the last subproblem's solution, and the desired output path.
+
+[TOOLS]
+# BUILDS THE MODEL OF THE LSP WITH BACKLOG
+
+function build_model(filename::String; )
+    products, periods, machines, d, c, g, f, I0, R, p, r, compat, K, Q, b =
+        load_instance_lotsizing_backlog(filename)
+
+
+    T_last = last(periods)
+    for j in products
+        max_b = maximum(b[j, t] for t in periods)
+        b[j, T_last] = 20 * max_b
+    end
+
+    LSP = Model() 
+
+    @variable(LSP, x[machines, products, t in periods] >= 0)
+    @variable(LSP, y[machines, products, t in periods], Bin)
+    @variable(LSP, I[products, t in periods] >= 0)
+    @variable(LSP, I_neg[products, t in periods] >= 0)
+
+    @variable(LSP, tot_setup_cost)
+    @variable(LSP, tot_inv_cost)
+    @variable(LSP, tot_prod_cost)
+    @variable(LSP, tot_backlog_cost)
+
+    @objective(LSP, Min,
+        sum(c[j,t]*x[i,j,t] + g[j,t]*y[i,j,t] for i in machines, j in products, t in periods) +
+        sum(f[j,t]*I[j,t] for j in products, t in periods) +
+        sum(b[j,t]*I_neg[j,t] for j in products, t in periods))
+
+    @constraint(LSP, balance[j in products, t in periods],
+        I[j,t] - I_neg[j,t] ==
+        (t > first(periods) ? I[j,t-1] - I_neg[j,t-1] : I0[j]) +
+        sum(x[i,j,t] for i in machines) - d[j,t])
+
+    @constraint(LSP, storage_capacity[t in periods],
+        sum(I[j,t] for j in products) <= Q)
+
+    @constraint(LSP, machine_capacity[i in machines, j in products, t in periods],
+        x[i,j,t] <= K * y[i,j,t])
+
+    @constraint(LSP, compatibility[i in machines, j in products, t in periods],
+        y[i,j,t] <= compat[i,j])
+
+    @constraint(LSP, resource_capacity[i in machines, t in periods],
+        sum(p[j]*x[i,j,t] + r[j]*y[i,j,t] for j in products) <= R[i])
+
+    @constraint(LSP, final_inventory[j in products],
+        I[j, last(periods)] == I0[j])
+
+    @constraint(LSP, tot_setup_cost == sum(g[j,t]*y[i,j,t] for i in machines, j in products, t in periods))
+    @constraint(LSP, tot_inv_cost   == sum(f[j,t]*I[j,t]   for j in products, t in periods))
+    @constraint(LSP, tot_prod_cost  == sum(c[j,t]*x[i,j,t] for i in machines, j in products, t in periods))
+    @constraint(LSP, tot_backlog_cost == sum(b[j,t]*I_neg[j,t] for j in products, t in periods))
+
+    return LSP
+end
+
+# ATOMIC BOX
+
+using JuMP, Gurobi
+
+function solve_subproblem(
+    base_model::Model, 
+    fixed_vars::Dict{VariableRef, Float64}, 
+    core_vars::Set{VariableRef}, 
+    relaxed_vars::Set{VariableRef}; 
+    sub_time_limit, 
+    sub_mip_gap, 
+    sub_work_limit
+)
+
+    m, ref_map = copy_model(base_model)
+    set_optimizer(m, Gurobi.Optimizer)
+    set_attribute(m, "OutputFlag", 1)
+    set_attribute(m, "Threads", 1)
+    
+    # Fix variables in fixed_vars to their specified values
+    for (v, val) in fixed_vars
+        v_cloned = ref_map[v] 
+        fix(v_cloned, val; force=true)
+    end
+    
+    # Core variables are set to binary
+    for v in core_vars
+        v_cloned = ref_map[v]
+        if !is_binary(v_cloned)
+            set_binary(v_cloned)
+        end
+    end
+    
+    # Future variables are relaxed to continuous
+    for v in relaxed_vars
+        v_cloned = ref_map[v]
+        if is_binary(v_cloned)
+            unset_binary(v_cloned)
+            set_lower_bound(v_cloned, 0.0)
+            set_upper_bound(v_cloned, 1.0)
+        end
+    end
+    
+    # Optimization settings
+    set_attribute(m, "TimeLimit", sub_time_limit)
+    set_attribute(m, "MIPGap", sub_mip_gap)
+    set_attribute(m, "WorkLimit", sub_work_limit)
+    optimize!(m)
+    
+
+    status = termination_status(m)
+    has_vals = has_values(m)
+    
+    sol_dict = Dict{VariableRef, Float64}()
+    obj_val = NaN
+
+    if has_vals
+        obj_val = objective_value(m)
+        for v in all_variables(base_model)
+            sol_dict[v] = value(ref_map[v])
+        end
+    end
+    
+    return status, has_vals, sol_dict, obj_val
+end
+
+
+function subproblem_succeeded(status, has_vals::Bool)
+    return has_vals
+end
+
+
+function apply_fixing_policy!(
+    fixed_vars::Dict{VariableRef, Float64},
+    current_solution::Dict{VariableRef, Float64},
+    core_vars_to_fix::Set{VariableRef}
+)
+    for v in core_vars_to_fix
+        val = current_solution[v]
+        rounded_val = round(val)
+        fixed_vars[v] = rounded_val
+    end
+    
+    return fixed_vars
+end
+
+
+function get_periods(model::Model, var_symbol::Symbol=:y)
+    var_container = model[var_symbol]
+    period_axis = axes(var_container)[end]
+    return sort(collect(period_axis))
+end
+
+
+function variables_by_period(model::Model, var_symbol::Symbol)
+    var_container = model[var_symbol]
+    result = Dict{Any, Vector{VariableRef}}()
+
+    for idx in Iterators.product(axes(var_container)...)
+        v = var_container[idx...]
+        t = idx[end]  # period is assumed to be the last axis
+        push!(get!(result, t, VariableRef[]), v)
+    end
+
+    return result
+end
+
+
+function partition_by_block(var_by_period::Dict, current_block_periods, future_periods)
+    core_vars = Set{VariableRef}()
+    for t in current_block_periods
+        if haskey(var_by_period, t)
+            union!(core_vars, var_by_period[t])
+        end
+    end
+
+    relaxed_vars = Set{VariableRef}()
+    for t in future_periods
+        if haskey(var_by_period, t)
+            union!(relaxed_vars, var_by_period[t])
+        end
+    end
+
+    return core_vars, relaxed_vars
+end
+
+
+function get_block_periods(all_periods::Vector, block_index::Int, block_size::Int, step_size::Int=block_size)
+    total = length(all_periods)
+    start_idx = (block_index - 1) * step_size + 1
+    
+    if start_idx > total
+        return Int[], Int[]
+    end
+    
+    end_idx = min(start_idx + block_size - 1, total)
+    
+    current_block_periods = all_periods[start_idx:end_idx]
+    future_periods = all_periods[end_idx+1:end]
+    
+    return current_block_periods, future_periods
+end
+
+function num_blocks(total_periods::Int, step_size::Int)
+    return div(total_periods-1, step_size) + 1
+end
+
+function write_solution(fixed_vars::Dict{VariableRef,Float64}, 
+                        continuous_vars::Dict{VariableRef,Float64}, 
+                        output_path::String)
+    combined = Dict{String, Float64}()
+    for (v, val) in fixed_vars
+        combined[JuMP.name(v)] = val
+    end
+    for (v, val) in continuous_vars
+        combined[JuMP.name(v)] = val
+    end
+    
+    open(output_path, "w") do io
+        write(io, JSON.json(combined))
+    end
+    
+    return output_path
+end
+
+[BACKLOG]
+The backlog instance is provided as a .json file found at: material\small_instance.json
+
+[OUTPUT REQUIRED]
+1. A block of Julia code implementing the procedure described in the policy, 
+   using the tools provided above. The code must be independent of the 
+   specific instance (i.e., reusable for future instances with the same 
+   structure).
+2. A brief explanation of the reasoning behind the code produced, including 
+   any assumptions made where the policy was ambiguous or underspecified.

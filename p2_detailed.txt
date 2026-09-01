@@ -1,0 +1,26 @@
+1. Build the instance using the backlog .json file and the "build_model" function.
+
+2. Identify the full time horizon using the "get_periods" function. Using the "num_blocks" function with a step_size of 3, determine how many windows are needed to cover the full horizon.
+
+3. Using the "variables_by_period" function, retrieve the binary variables (y) of the model grouped by period.
+
+4. Set the first window as the current window (block_index = 1). Initialize "fixed_vars" as empty.
+
+5. Using the "get_block_periods" function, with a block_size of 5 and a step_size of 3, obtain the periods belonging to the current window and the periods belonging to all not-yet-reached (future) periods.
+
+6. Using the "partition_by_block" function, obtain:
+    - core_vars: the binary variables belonging to the current window's periods (this includes both new periods entering the window for the first time, and any overlapping periods already solved in a previous window but not yet permanently fixed)
+    - relaxed_vars: the binary variables belonging to all future periods
+Mind: fixed_vars carries over unchanged from the previous iteration (i.e. it's empty on the first iteration). Continuous variables are never included in core_vars or relaxed_vars: they remain free throughout the entire procedure.
+
+7. Solve the current subproblem using the "solve_subproblem" function. The parameters sub_time_limit, sub_mip_gap, and sub_work_limit are keyword arguments: they must be passed by name (e.g. solve_subproblem(model, fixed_vars, core_vars, relaxed_vars; sub_time_limit=..., sub_mip_gap=..., sub_work_limit=...)), never positionally.
+
+8. Check whether the subproblem produced a usable solution through the "subproblem_succeeded" function. There are two possible outcomes:
+    - If no usable solution has been achieved, halt the procedure and report that the fixings decided in previous windows likely made this portion of the problem infeasible — this does not necessarily mean the original instance itself is infeasible.
+    - If a usable solution has been found, permanently fix the binary variables belonging to the first 3 periods of the current window (or all periods of the current window, if it contains fewer than 3) to the values found in the solution, using the "apply_fixing_policy!" function.
+
+9. Shift to the following window, which becomes the new current window (increment block_index by 1).
+
+10. Repeat steps 5 to 9 until all windows have been elaborated and a complete solution has been obtained.
+
+11. Upon completion, write the result to file using the "write_solution" function, passing fixed_vars, the continuous variable values from the last subproblem's solution, and the desired output path.
