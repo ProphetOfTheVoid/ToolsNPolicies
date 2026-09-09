@@ -49,6 +49,11 @@ The backlog instance is provided as a .json file found at: material\small_instan
 1. A block of Julia code implementing the procedure described in the policy, 
    using the tools provided above. The code must be independent of the 
    specific instance (i.e., reusable for future instances with the same 
-   structure).
+   structure). The entire solution must be encapsulated in a single Julia function (e.g. 
+   solve_lsp(...)) that returns the output path upon completion. The only 
+   top-level code outside this function definition must be the single call 
+   that invokes it (and captures its return value, if needed) — do not add 
+   any other top-level logic, checks, or print statements that reference 
+   variables local to the function.
 2. A brief explanation of the reasoning behind the code produced, including 
    any assumptions made where the policy was ambiguous or underspecified.
