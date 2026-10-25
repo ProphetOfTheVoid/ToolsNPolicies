@@ -15,10 +15,10 @@ include(joinpath(@__DIR__, "apply_fixing_policy.jl"))
 include(joinpath(@__DIR__, "load_instance_lotsizing_backlog.jl"))
 
 # --- Configuration and Constants ---
-const BACKLOG_FILE = "material/small_instance.json"
-const BLOCK_SIZE = 5
-const OUTPUT_FILE = "solution.json"
-const SUB_TIME_LIMIT = 10.0  # seconds
+const BACKLOG_FILE = "material/140_instance.json"
+const BLOCK_SIZE = 4
+const OUTPUT_FILE = "metrics/solution.json"
+const SUB_TIME_LIMIT = 25.0  # seconds
 const SUB_MIP_GAP = 0.01    # 1% gap
 const SUB_WORK_LIMIT = 10000 # arbitrary limit
 
@@ -32,14 +32,14 @@ function solve_rolling_horizon_lsp()
     # 2. Identify the full time horizon and blocks
     periods = get_periods(LSP, :y)
     T_total = length(periods)
-    num_blocks_needed = num_blocks(T_total, BLOCK_SIZE)
+    num_blocks_needed = get_blocks_to_cover_horizon(T_total, BLOCK_SIZE)
 
     println("Total periods: $T_total. Number of blocks: $num_blocks_needed.")
 
     # Initialize state variables
-    fixed_vars::Dict{VariableRef, Float64} = Dict{VariableRef, Float64}()
-    continuous_solution::Dict{VariableRef, Float64} = Dict{VariableRef, Float64}()
-    
+    fixed_vars::Dict{VariableRef,Float64} = Dict{VariableRef,Float64}()
+    continuous_solution::Dict{VariableRef,Float64} = Dict{VariableRef,Float64}()
+
     # 3. Retrieve variables grouped by period
     vars_by_period = variables_by_period(LSP, :y)
 
@@ -50,9 +50,9 @@ function solve_rolling_horizon_lsp()
 
     # 10. Repeat steps 4 to 9 until all blocks are elaborated
     for block_index in 1:num_blocks_needed
-        
+
         # 5. Get periods for current and future blocks
-        current_periods, future_periods = get_block_periods(periods, block_index, BLOCK_SIZE)
+        current_periods, future_periods = split_periods(periods, block_index, BLOCK_SIZE)
 
         # 6. Partition variables
         core_vars, relaxed_vars = partition_by_block(vars_by_period, current_periods, future_periods)
@@ -61,15 +61,15 @@ function solve_rolling_horizon_lsp()
 
         # 7. Solve the current subproblem
         status, has_vals, sub_sol_dict, sub_obj_val = solve_subproblem(
-            LSP, 
-            fixed_vars, 
-            core_vars, 
-            relaxed_vars; 
-            sub_time_limit=SUB_TIME_LIMIT, 
-            sub_mip_gap=SUB_MIP_GAP, 
+            LSP,
+            fixed_vars,
+            core_vars,
+            relaxed_vars;
+            sub_time_limit=SUB_TIME_LIMIT,
+            sub_mip_gap=SUB_MIP_GAP,
             sub_work_limit=SUB_WORK_LIMIT
         )
-        
+
         # 8. Check success and apply fixing policy
         if !subproblem_succeeded(status, has_vals)
             # Halt and report infeasibility
@@ -79,32 +79,32 @@ function solve_rolling_horizon_lsp()
 
         # Apply fixing policy: Fix the binary variables of the current block (core_vars)
         new_fixed_vars = apply_fixing_policy!(
-            fixed_vars, 
-            sub_sol_dict, 
+            fixed_vars,
+            sub_sol_dict,
             core_vars
         )
-        
+
         # Update the overall state:
         # 1. Update fixed variables
         fixed_vars = new_fixed_vars
-        
+
         # 2. Update continuous solution dictionary with all solved values
         # We take the union of current continuous solutions and the latest sub-solution
         # Note: We must ensure we capture all continuous variables (x, I, I_neg, etc.)
         for (v, val) in sub_sol_dict
             # We only update if the variable is continuous or was previously solved
-            if !is_binary(v) || JuMP.is_integer(v) 
-                 continuous_solution[v] = val
+            if !is_binary(v) || JuMP.is_integer(v)
+                continuous_solution[v] = val
             end
         end
-        
+
         # 9. Shift to the following block (handled by the loop increment)
     end
 
     # 11. Upon completion, write the result
     println("\nSuccessfully solved all blocks. Writing solution...")
     write_solution(fixed_vars, continuous_solution, OUTPUT_FILE)
-    
+
     return OUTPUT_FILE
 end
 

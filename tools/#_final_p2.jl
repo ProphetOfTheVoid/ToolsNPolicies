@@ -11,11 +11,19 @@ include(joinpath(@__DIR__, "apply_fixing_policy.jl"))
 include(joinpath(@__DIR__, "load_instance_lotsizing_backlog.jl"))
 
 # --- Setup and Initialization ---
-const FILENAME = "material/small_instance.json"
-const OUTPUT_PATH = "solution_output.json"
+const FILENAME = "material/140_instance.json"
+const OUTPUT_PATH = "metrics/solution.json"
+
+# Window parameters
+const BLOCK_SIZE = 20                       # number of periods in each window
+const OVERLAP = 8                           # periods shared by consecutive windows
+const STEP_SIZE = BLOCK_SIZE - OVERLAP      # periods the window advances (and fixes) at each iteration
+
+@assert BLOCK_SIZE >= 1 "BLOCK_SIZE must be at least 1"
+@assert 0 <= OVERLAP < BLOCK_SIZE "OVERLAP must satisfy 0 <= OVERLAP < BLOCK_SIZE"
 
 # Solver parameters (using placeholder values)
-const SUB_TIME_LIMIT = 10.0 # seconds
+const SUB_TIME_LIMIT = 60.0 # seconds
 const SUB_MIP_GAP = 0.001
 const SUB_WORK_LIMIT = 1000
 
@@ -31,12 +39,12 @@ function solve_rolling_horizon_lsp()
     T_last = last(all_periods)
 
     # Determine the number of windows
-    num_windows = num_blocks(length(all_periods), 3)
+    num_windows = get_blocks_to_cover_horizon(length(all_periods), STEP_SIZE)
 
     # Initialize state variables
     block_index = 1
-    fixed_vars::Dict{VariableRef, Float64} = Dict{VariableRef, Float64}()
-    last_solution_dict::Dict{VariableRef, Float64} = Dict{VariableRef, Float64}()
+    fixed_vars::Dict{VariableRef,Float64} = Dict{VariableRef,Float64}()
+    last_solution_dict::Dict{VariableRef,Float64} = Dict{VariableRef,Float64}()
 
     var_by_period = variables_by_period(model, :y)
 
@@ -46,15 +54,15 @@ function solve_rolling_horizon_lsp()
         println("--- Processing Block $block_index/$num_windows ---")
 
         # 5. Get period sets
-        current_block_periods, future_periods = get_block_periods(
-            all_periods, block_index, 5, 3
+        current_block_periods, future_periods = split_periods(
+            all_periods, block_index, BLOCK_SIZE, STEP_SIZE
         )
 
         # 6. Partition variables
         # variables_by_period must be called only once outside the loop 
         # but for structural clarity, we re-fetch it conceptually.
         #var_by_period = variables_by_period(model, :y)
-        
+
         core_vars, relaxed_vars = partition_by_block(
             var_by_period, current_block_periods, future_periods
         )
@@ -62,15 +70,15 @@ function solve_rolling_horizon_lsp()
         # 7. Solve the current subproblem
         # Note: The solver must use the original model structure but operate on a copy.
         status, has_vals, solution_dict, obj_val = solve_subproblem(
-            model, 
-            fixed_vars, 
-            core_vars, 
-            relaxed_vars; 
-            sub_time_limit=SUB_TIME_LIMIT, 
-            sub_mip_gap=SUB_MIP_GAP, 
+            model,
+            fixed_vars,
+            core_vars,
+            relaxed_vars;
+            sub_time_limit=SUB_TIME_LIMIT,
+            sub_mip_gap=SUB_MIP_GAP,
             sub_work_limit=SUB_WORK_LIMIT
         )
-        
+
         # 8. Check success and apply fixing policy
         if !subproblem_succeeded(status, has_vals)
             # Policy requirement: Report specific failure message
@@ -81,9 +89,9 @@ function solve_rolling_horizon_lsp()
         # Success: Update the stored continuous solution
         last_solution_dict = solution_dict
 
-        # Determine which variables to fix: first 3 periods of the current window
-        periods_to_fix = current_block_periods[1:min(3, length(current_block_periods))]
-        
+        # Determine which variables to fix: first STEP_SIZE periods of the current window
+        periods_to_fix = current_block_periods[1:min(STEP_SIZE, length(current_block_periods))]
+
         # Identify the variables corresponding to these periods within the core set
         core_vars_to_fix = Set{VariableRef}()
         for t in periods_to_fix
@@ -101,8 +109,8 @@ function solve_rolling_horizon_lsp()
 
         # Apply the fixing policy
         fixed_vars = apply_fixing_policy!(
-            fixed_vars, 
-            solution_dict, 
+            fixed_vars,
+            solution_dict,
             core_vars_to_fix
         )
 

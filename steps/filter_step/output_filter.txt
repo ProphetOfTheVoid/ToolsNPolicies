@@ -1,0 +1,26 @@
+[[[TOOLS]]]
+build_model
+get_periods
+get_blocks_to_cover_horizon
+variables_by_period
+split_periods
+partition_by_block
+solve_subproblem
+subproblem_succeeded
+apply_fixing_policy!
+write_solution
+
+[[[WHY]]]
+build_model: Needed to create the initial optimization model from the backlog instance.
+get_periods: Required to determine the full list of periods spanning the entire time horizon.
+get_blocks_to_cover_horizon: Used to calculate the total number of overlapping windows required to cover the horizon.
+variables_by_period: Necessary to group all binary variables (`y`) by their respective period indices.
+split_periods: Used in each iteration to divide the total period indices into the current window and the future periods.
+partition_by_block: Splits the set of binary variables into core (current window) and relaxed (future periods) sets for the subproblem.
+solve_subproblem: Executes the core step of the policy, solving the subproblem with fixed, core, and relaxed variables.
+subproblem_succeeded: Used to check if the solution from the subproblem is usable before applying fixing decisions.
+apply_fixing_policy!: Implements the core logic of fixing the binary variables for the first three periods of the current window.
+write_solution: Used at the end to write out the complete solution using the fixed binary variables and the continuous values from the last subproblem.
+Excluded: compute_lp_relaxation_bound (The policy never requires solving the full LP relaxation bound.)
+Excluded: select_next_node (This tool is for branch-and-bound search tree navigation, not used in this linear forward-pass policy.)
+Excluded: warm_start_model! (The procedure manages state via passing fixed variable dictionaries, making explicit model warm-starting unnecessary.)

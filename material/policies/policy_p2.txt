@@ -1,0 +1,29 @@
+Rolling Horizon with Overlapping Windows:
+
+Build the base model from the backlog instance. Cover the full time 
+horizon with consecutive windows of 5 periods, in chronological order. 
+Each window starts 3 periods after the previous one, so that 
+consecutive windows overlap by 2 periods.
+
+Process the windows one at a time, starting from the first. At each 
+step, treat the binary variables of all periods in the current window 
+as free to be decided, including the overlapping periods that were 
+already decided in a previous window but not yet permanently fixed. 
+Relax the binary variables of all periods after the window; any 
+variables fixed in previous iterations remain fixed. Continuous 
+variables are never fixed or relaxed: they stay free throughout the 
+whole procedure. Solve the resulting subproblem.
+
+If the subproblem does not yield a usable solution, stop and report 
+that the fixing decisions made in previous windows likely made this 
+portion of the problem infeasible; this does not necessarily mean 
+that the original instance itself is infeasible. Otherwise, fix 
+permanently the binary variables of the first 3 periods of the current 
+window (or of all its periods, if it contains fewer than 3) to the 
+values found. The remaining periods of the window are left open to be 
+reconsidered by the next window. Then move to the next window and 
+repeat.
+
+Once all windows have been processed, write out the complete solution, 
+the fixed binary variables together with the continuous variable 
+values from the last subproblem, to the output file.

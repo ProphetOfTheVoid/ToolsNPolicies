@@ -22,28 +22,16 @@ The generated code must not print progress messages, logging, or status
 updates to standard output during normal execution. The only required 
 output is the final result file produced by "write_solution". The one 
 exception is reporting failure: if the procedure halts due to subproblem 
-infeasibility, print a single explanatory message as described in step 7.
+infeasibility, print a single explanatory message.
 
 [POLICY]
 {policy}
 
 [TOOLS]
-{build_tool}
-
-{solve_tool}
-
-{check_tool}
-
-{fix_tool}
-
-{retreive_tool}
-
-{plan_tool}
-
-{write_tool}
+{tools}
 
 [BACKLOG]
-The backlog instance is provided as a .json file found at: material\small_instance.json
+The backlog instance is provided as a .json file found at: material/small_instance.json
 
 [OUTPUT REQUIRED]
 1. A block of Julia code implementing the procedure described in the policy, 
@@ -55,5 +43,11 @@ The backlog instance is provided as a .json file found at: material\small_instan
    that invokes it (and captures its return value, if needed) — do not add 
    any other top-level logic, checks, or print statements that reference 
    variables local to the function.
+
+   Return this code inside exactly one fenced code block tagged as `julia`
+   (i.e. starting with ```julia and ending with ```). Do not include any
+   other fenced code block anywhere in your response.
+
 2. A brief explanation of the reasoning behind the code produced, including 
    any assumptions made where the policy was ambiguous or underspecified.
+   This must appear as plain text outside the fenced code block from point 1.

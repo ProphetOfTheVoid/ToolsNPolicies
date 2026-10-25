@@ -1,0 +1,20 @@
+Sequential Block Fixing (No Overlap):
+
+Build the base model from the backlog instance. Split the full time 
+horizon into consecutive, non-overlapping blocks of 5 periods, in 
+chronological order.
+
+Process the blocks one at a time, starting from the first. At each 
+step, treat the binary variables of the current block as free to be 
+decided, and relax the binary variables of all following blocks; any 
+variables fixed in previous iterations remain fixed. Solve the 
+resulting subproblem.
+
+If the subproblem does not yield a usable solution, stop and report 
+that the fixing decisions made so far led to infeasibility. Otherwise, 
+fix the binary variables of the current block to the values found, 
+then move on to the next block and repeat.
+
+Once all blocks have been processed, write out the complete solution — 
+the fixed binary variables together with the continuous variable 
+values from the last subproblem — to the output file.

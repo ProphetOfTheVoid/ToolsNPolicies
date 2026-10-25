@@ -1,0 +1,93 @@
+build_model(instance_path::String) -> Model
+Builds the base optimization model from a backlog instance file (JSON).
+Returns the model object (a JuMP Model) used by all subsequent tools.
+Note on variable types: only `y` is binary. All other variables (`x`,
+`I`, `I_neg`, and the aggregate cost variables) are continuous and are
+never included in core_vars/relaxed_vars/fixed_vars — they stay free
+throughout the whole procedure.
+
+get_periods(model::Model, variable_symbol::Symbol) -> Vector{Int}
+Returns the full list of period indices in the instance's time horizon,
+in chronological order. Call as get_periods(model, :y).
+
+get_blocks_to_cover_horizon(num_periods::Int, block_size::Int) -> Int
+Returns how many consecutive blocks of `block_size` periods are needed
+to cover `num_periods` periods (pass length(periods)). If num_periods is
+not a multiple of block_size, the last block is shorter — handled
+automatically, not something the caller needs to branch on.
+
+variables_by_period(model::Model, variable_symbol::Symbol) -> Dict{Int, Vector{VariableRef}}
+Returns the model's binary variables (`y`) grouped by the period they're
+indexed by. Call as variables_by_period(model, :y).
+
+split_periods(periods::Vector{Int}, block_index::Int, block_size::Int) -> Tuple{Vector{Int}, Vector{Int}}
+Returns two period vectors: the periods belonging to `block_index`, and
+the periods belonging to all blocks after it. `future` is empty for the
+last block.
+
+partition_by_block(vars_by_period::Dict{Int, Vector{VariableRef}},
+                   current_periods::Vector{Int},
+                   future_periods::Vector{Int})
+    -> Tuple{Set{VariableRef}, Set{VariableRef}}
+Splits the binary variables into two sets: those indexed by periods in
+`current_periods` (core_vars) and those indexed by periods in
+`future_periods` (relaxed_vars). Both are returned as Set{VariableRef},
+which is exactly what solve_subproblem expects.
+
+solve_subproblem(model::Model,
+                 fixed_vars::Dict{VariableRef,Float64},
+                 core_vars::Set{VariableRef},
+                 relaxed_vars::Set{VariableRef};
+                 sub_time_limit::Real, sub_mip_gap::Real, sub_work_limit::Real)
+    -> Tuple{MOI.TerminationStatusCode, Bool, Dict{VariableRef,Float64}, Float64}
+    i.e. (status, has_vals::Bool, sol_dict::Dict{VariableRef,Float64}, obj_val::Float64)
+sub_time_limit, sub_mip_gap and sub_work_limit are keyword-only —
+always pass them by name, never positionally.
+Solves the subproblem: fixed_vars are held at their given values,
+core_vars are solved as binary, relaxed_vars are relaxed to continuous.
+Returns a 4-element tuple, NOT a single solution object. `sol_dict`
+holds the values of every variable in the base model (binary and
+continuous together, indexed by base-model VariableRef) — it is not
+pre-filtered by variable type. `obj_val` is NaN when has_vals is false.
+
+subproblem_succeeded(status::MOI.TerminationStatusCode, has_vals::Bool) -> Bool
+Takes two separate positional arguments (not the whole tuple, not a
+dict). Current behavior: returns has_vals as-is; status is accepted
+but not currently used in the check.
+
+apply_fixing_policy!(fixed_vars::Dict{VariableRef,Float64},
+                     sol_dict::Dict{VariableRef,Float64},
+                     core_vars::Set{VariableRef})
+    -> Dict{VariableRef,Float64}
+Call as: fixed_vars = apply_fixing_policy!(fixed_vars, sol_dict, core_vars)
+`sol_dict` is the third element of solve_subproblem's return tuple.
+For each variable in core_vars, rounds its value in sol_dict and
+stores it into fixed_vars. Mutates and returns fixed_vars.
+
+write_solution(fixed_vars::Dict{VariableRef,Float64},
+               continuous_vars::Dict{VariableRef,Float64},
+               output_path::String) -> String
+Requires two SEPARATE dictionaries — it does not distinguish binary
+from continuous variables itself, it trusts what it's given.
+`continuous_vars` must be built by the caller: after the loop
+completes, fixed_vars contains every binary (`y`) variable in the
+model. Take the last sol_dict and keep only the entries whose
+variable is NOT a key of fixed_vars — that gives the continuous
+variables' values. Returns output_path.
+
+compute_lp_relaxation_bound(model::Model) -> Float64
+Solves the full LP relaxation of the model, with every binary variable
+relaxed to continuous, and returns the optimal objective value. This value is
+a lower bound on the optimal cost of the original problem. It does not return
+a solution and does not modify the model.
+
+select_next_node(open_nodes::Vector{Node}, strategy::Symbol) -> Node
+Chooses the next branch-and-bound node to explore from the list of open nodes.
+Supported strategies are :best_first (lowest lower bound) and :depth_first
+(most recently created node). Removes the chosen node from open_nodes and
+returns it.
+
+warm_start_model!(model::Model, start_values::Dict{VariableRef,Float64}) -> Model
+Assigns initial values to the model's variables as a starting point for the
+solver, taken from a previous solution. Mutates and returns the model. It
+does not fix any variable and does not change the problem being solved.

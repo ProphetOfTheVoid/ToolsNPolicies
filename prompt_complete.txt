@@ -1,0 +1,156 @@
+[SYSTEM / CONTEXT]
+You are an expert Julia programmer, and an expert in Operations Research 
+and Mixed Integer Programming (MIP). You are given a policy and a set of 
+tools for a specific instance of a multi-index time-dependent MIP problem 
+(a Lot Sizing Problem with backlog). Your task is to produce a standalone, 
+instance-independent block of Julia code that, when executed, solves the 
+instance by following the policy and using the tools provided below.
+
+Before finalizing your answer, mentally check every function call for 
+correct Julia syntax: keyword arguments must match the exact parameter 
+names from the function signatures provided, and must use `name=value` 
+syntax only for parameters explicitly declared as keyword-only (after `;` 
+in the signature) — never invent keyword names, and never use positional 
+syntax for keyword-only parameters. Never use dot-syntax method calls 
+(e.g. `obj.method(...)`), which Julia does not support; use the plain 
+function call syntax instead (e.g. `union!(obj, ...)`). Only use operators 
+and function names that are standard, well-known Julia/JuMP identifiers — 
+never invent or guess a name, symbol, or operator that does not appear in 
+the tools provided or in core Julia/JuMP.
+
+The generated code must not print progress messages, logging, or status 
+updates to standard output during normal execution. The only required 
+output is the final result file produced by "write_solution". The one 
+exception is reporting failure: if the procedure halts due to subproblem 
+infeasibility, print a single explanatory message.
+
+[POLICY]
+Rolling Horizon with Overlapping Windows:
+
+Build the base model from the backlog instance. Cover the full time 
+horizon with consecutive windows of 5 periods, in chronological order. 
+Each window starts 3 periods after the previous one, so that 
+consecutive windows overlap by 2 periods.
+
+Process the windows one at a time, starting from the first. At each 
+step, treat the binary variables of all periods in the current window 
+as free to be decided, including the overlapping periods that were 
+already decided in a previous window but not yet permanently fixed. 
+Relax the binary variables of all periods after the window; any 
+variables fixed in previous iterations remain fixed. Continuous 
+variables are never fixed or relaxed: they stay free throughout the 
+whole procedure. Solve the resulting subproblem.
+
+If the subproblem does not yield a usable solution, stop and report 
+that the fixing decisions made in previous windows likely made this 
+portion of the problem infeasible; this does not necessarily mean 
+that the original instance itself is infeasible. Otherwise, fix 
+permanently the binary variables of the first 3 periods of the current 
+window (or of all its periods, if it contains fewer than 3) to the 
+values found. The remaining periods of the window are left open to be 
+reconsidered by the next window. Then move to the next window and 
+repeat.
+
+Once all windows have been processed, write out the complete solution, 
+the fixed binary variables together with the continuous variable 
+values from the last subproblem, to the output file.
+
+[TOOLS]
+build_model(instance_path::String) -> Model
+Builds the base optimization model from a backlog instance file (JSON).
+Returns the model object (a JuMP Model) used by all subsequent tools.
+Note on variable types: only `y` is binary. All other variables (`x`,
+`I`, `I_neg`, and the aggregate cost variables) are continuous and are
+never included in core_vars/relaxed_vars/fixed_vars — they stay free
+throughout the whole procedure.
+
+get_periods(model::Model, variable_symbol::Symbol) -> Vector{Int}
+Returns the full list of period indices in the instance's time horizon,
+in chronological order. Call as get_periods(model, :y).
+
+get_blocks_to_cover_horizon(num_periods::Int, block_size::Int) -> Int
+Returns how many consecutive blocks of `block_size` periods are needed
+to cover `num_periods` periods (pass length(periods)). If num_periods is
+not a multiple of block_size, the last block is shorter — handled
+automatically, not something the caller needs to branch on.
+
+variables_by_period(model::Model, variable_symbol::Symbol) -> Dict{Int, Vector{VariableRef}}
+Returns the model's binary variables (`y`) grouped by the period they're
+indexed by. Call as variables_by_period(model, :y).
+
+split_periods(periods::Vector{Int}, block_index::Int, block_size::Int) -> Tuple{Vector{Int}, Vector{Int}}
+Returns two period vectors: the periods belonging to `block_index`, and
+the periods belonging to all blocks after it. `future` is empty for the
+last block.
+
+partition_by_block(vars_by_period::Dict{Int, Vector{VariableRef}},
+                   current_periods::Vector{Int},
+                   future_periods::Vector{Int})
+    -> Tuple{Set{VariableRef}, Set{VariableRef}}
+Splits the binary variables into two sets: those indexed by periods in
+`current_periods` (core_vars) and those indexed by periods in
+`future_periods` (relaxed_vars). Both are returned as Set{VariableRef},
+which is exactly what solve_subproblem expects.
+
+solve_subproblem(model::Model,
+                 fixed_vars::Dict{VariableRef,Float64},
+                 core_vars::Set{VariableRef},
+                 relaxed_vars::Set{VariableRef};
+                 sub_time_limit::Real, sub_mip_gap::Real, sub_work_limit::Real)
+    -> Tuple{MOI.TerminationStatusCode, Bool, Dict{VariableRef,Float64}, Float64}
+    i.e. (status, has_vals::Bool, sol_dict::Dict{VariableRef,Float64}, obj_val::Float64)
+sub_time_limit, sub_mip_gap and sub_work_limit are keyword-only —
+always pass them by name, never positionally.
+Solves the subproblem: fixed_vars are held at their given values,
+core_vars are solved as binary, relaxed_vars are relaxed to continuous.
+Returns a 4-element tuple, NOT a single solution object. `sol_dict`
+holds the values of every variable in the base model (binary and
+continuous together, indexed by base-model VariableRef) — it is not
+pre-filtered by variable type. `obj_val` is NaN when has_vals is false.
+
+subproblem_succeeded(status::MOI.TerminationStatusCode, has_vals::Bool) -> Bool
+Takes two separate positional arguments (not the whole tuple, not a
+dict). Current behavior: returns has_vals as-is; status is accepted
+but not currently used in the check.
+
+apply_fixing_policy!(fixed_vars::Dict{VariableRef,Float64},
+                     sol_dict::Dict{VariableRef,Float64},
+                     core_vars::Set{VariableRef})
+    -> Dict{VariableRef,Float64}
+Call as: fixed_vars = apply_fixing_policy!(fixed_vars, sol_dict, core_vars)
+`sol_dict` is the third element of solve_subproblem's return tuple.
+For each variable in core_vars, rounds its value in sol_dict and
+stores it into fixed_vars. Mutates and returns fixed_vars.
+
+write_solution(fixed_vars::Dict{VariableRef,Float64},
+               continuous_vars::Dict{VariableRef,Float64},
+               output_path::String) -> String
+Requires two SEPARATE dictionaries — it does not distinguish binary
+from continuous variables itself, it trusts what it's given.
+`continuous_vars` must be built by the caller: after the loop
+completes, fixed_vars contains every binary (`y`) variable in the
+model. Take the last sol_dict and keep only the entries whose
+variable is NOT a key of fixed_vars — that gives the continuous
+variables' values. Returns output_path.
+
+[BACKLOG]
+The backlog instance is provided as a .json file found at: material/small_instance.json
+
+[OUTPUT REQUIRED]
+1. A block of Julia code implementing the procedure described in the policy, 
+   using the tools provided above. The code must be independent of the 
+   specific instance (i.e., reusable for future instances with the same 
+   structure). The entire solution must be encapsulated in a single Julia function (e.g. 
+   solve_lsp(...)) that returns the output path upon completion. The only 
+   top-level code outside this function definition must be the single call 
+   that invokes it (and captures its return value, if needed) — do not add 
+   any other top-level logic, checks, or print statements that reference 
+   variables local to the function.
+
+   Return this code inside exactly one fenced code block tagged as `julia`
+   (i.e. starting with ```julia and ending with ```). Do not include any
+   other fenced code block anywhere in your response.
+
+2. A brief explanation of the reasoning behind the code produced, including 
+   any assumptions made where the policy was ambiguous or underspecified.
+   This must appear as plain text outside the fenced code block from point 1.

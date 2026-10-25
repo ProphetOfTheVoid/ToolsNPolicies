@@ -1,0 +1,33 @@
+## 1. `in` on a Dict instead of `haskey`
+Description: `x in d` on a dictionary `d` checks against KEYS only when the
+check is meant that way; for membership checks the correct pattern is
+`haskey(d, x)`.
+Wrong:   `if var_ref in fixed_vars`
+Correct: `if haskey(fixed_vars, var_ref)`
+
+Note: `x in keys(d)` is ALSO already correct — functionally identical to
+`haskey(d, x)`, NOT an instance of this bug. Do not rewrite it. The bug is
+specifically `x in d` with `d` itself (no `keys(...)` wrapper) on the
+right-hand side of `in`.
+
+## 2. Shadowing a tool or known function
+Description: a local variable reuses the name of a tool/function, hiding it for
+the rest of the scope.
+Wrong:   `num_blocks = num_blocks(instance)`
+Correct: `n_blocks = num_blocks(instance)`
+
+## 3. `vcat` without splat on a comprehension/generator
+Description: `vcat(x for x in xs)` builds a one-element vector (the generator
+itself), it does not concatenate the elements.
+Wrong:   `vcat(f(x) for x in xs)`
+Correct: `vcat((f(x) for x in xs)...)`
+
+## 4. Positional argument passed where a keyword-only argument is required
+Description: if a function's signature declares a parameter after `;`
+(keyword-only), every call to that function must pass it as
+`name=value`. Passing it positionally is invalid regardless of whether
+comma or semicolon separates it from the other arguments — Julia will
+look for a method with that many positional parameters and fail to find
+one, raising a MethodError at runtime.
+Wrong:   `solve_lsp(path, "solution.json")`   (output_path is keyword-only)
+Correct: `solve_lsp(path; output_path="solution.json")`

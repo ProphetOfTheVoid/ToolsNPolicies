@@ -1,0 +1,80 @@
+{
+    "instance_id": 2,
+    "products": [
+        "prod1",
+        "prod2"
+    ],
+    "machines": [
+        "machine1"
+    ],
+    "periods": [
+        1,
+        2,
+        3
+    ],
+    "demand": [
+        30,
+        110,
+        40,
+        20,
+        90,
+        30
+    ],
+    "prod_cost": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+    ],
+    "setup_cost": [
+        500,
+        500,
+        500,
+        500,
+        500,
+        500
+    ],
+    "inv_cost": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+    ],
+    "backlog_cost": [
+        20,
+        20,
+        20,
+        20,
+        20,
+        20
+    ],
+    "prod_time_b": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+    ],
+    "setup_time_s": [
+        20,
+        20
+    ],
+    "init_inv": [
+        20,
+        20
+    ],
+    "compat": [
+        true,
+        true
+    ],
+    "machine_cap": [
+        150
+    ],
+    "max_prod_K": 150,
+    "total_inv_Q": 80
+}
